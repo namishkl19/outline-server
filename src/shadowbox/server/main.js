@@ -12,41 +12,40 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import * as fs from 'fs';
-import * as http from 'http';
-import * as path from 'path';
-import * as process from 'process';
-import * as prometheus from 'prom-client';
-import * as restify from 'restify';
-import * as corsMiddleware from 'restify-cors-middleware2';
+const fs = require('fs');
+const http = require('http');
+const path = require('path');
+const process = require('process');
+const prometheus = require('prom-client');
+const restify = require('restify');
+const corsMiddleware = require('restify-cors-middleware2');
 
-import {RealClock} from '../infrastructure/clock';
-import {PortProvider} from '../infrastructure/get_port';
-import * as json_config from '../infrastructure/json_config';
-import * as logging from '../infrastructure/logging';
-import {ApiPrometheusClient, startPrometheus} from '../infrastructure/prometheus_scraper';
-import {RolloutTracker} from '../infrastructure/rollout';
-import * as version from './version';
+const { RealClock } = require('../infrastructure/clock');
+const { PortProvider } = require('../infrastructure/get_port');
+const json_config = require('../infrastructure/json_config');
+const logging = require('../infrastructure/logging');
+const { ApiPrometheusClient, startPrometheus } = require('../infrastructure/prometheus_scraper');
+const { RolloutTracker } = require('../infrastructure/rollout');
+const version = require('./version');
 
-import {PrometheusManagerMetrics} from './manager_metrics';
-import {bindService, ShadowsocksManagerService} from './manager_service';
-import {OutlineShadowsocksServer} from './outline_shadowsocks_server';
-import {AccessKeyConfigJson, ServerAccessKeyRepository} from './server_access_key';
-import * as server_config from './server_config';
-import {
+const { PrometheusManagerMetrics } = require('./manager_metrics');
+const { bindService, ShadowsocksManagerService } = require('./manager_service');
+const { OutlineShadowsocksServer } = require('./outline_shadowsocks_server');
+const { ServerAccessKeyRepository } = require('./server_access_key');
+const server_config = require('./server_config');
+const {
   OutlineSharedMetricsPublisher,
   PrometheusUsageMetrics,
   RestMetricsCollectorClient,
-  SharedMetricsPublisher,
-} from './shared_metrics';
+} = require('./shared_metrics');
 
 const APP_BASE_DIR = path.join(__dirname, '..');
 const DEFAULT_STATE_DIR = '/root/shadowbox/persisted-state';
 const MMDB_LOCATION_COUNTRY = '/var/lib/libmaxminddb/ip-country.mmdb';
 const MMDB_LOCATION_ASN = '/var/lib/libmaxminddb/ip-asn.mmdb';
 
-async function exportPrometheusMetrics(registry: prometheus.Registry, port): Promise<http.Server> {
-  return new Promise<http.Server>((resolve, _) => {
+async function exportPrometheusMetrics(registry, port) {
+  return new Promise((resolve) => {
     const server = http.createServer((_, res) => {
       res.setHeader('Content-Type', registry.contentType);
       res.write(registry.metrics());
@@ -55,22 +54,17 @@ async function exportPrometheusMetrics(registry: prometheus.Registry, port): Pro
     server.on('listening', () => {
       resolve(server);
     });
-    server.listen({port, host: 'localhost', exclusive: true});
+    server.listen({ port, host: 'localhost', exclusive: true });
   });
 }
 
-function reserveExistingAccessKeyPorts(
-  keyConfig: json_config.JsonConfig<AccessKeyConfigJson>,
-  portProvider: PortProvider
-) {
+function reserveExistingAccessKeyPorts(keyConfig, portProvider) {
   const accessKeys = keyConfig.data().accessKeys || [];
   const dedupedPorts = new Set(accessKeys.map((ak) => ak.port));
   dedupedPorts.forEach((p) => portProvider.addReservedPort(p));
 }
 
-function createRolloutTracker(
-  serverConfig: json_config.JsonConfig<server_config.ServerConfigJson>
-): RolloutTracker {
+function createRolloutTracker(serverConfig) {
   const rollouts = new RolloutTracker(serverConfig.data().serverId);
   if (serverConfig.data().rollouts) {
     for (const rollout of serverConfig.data().rollouts) {
@@ -86,15 +80,11 @@ async function main() {
   logging.info(`Version is ${version.getPackageVersion()}`);
 
   const portProvider = new PortProvider();
-  const accessKeyConfig = json_config.loadFileConfig<AccessKeyConfigJson>(
-    getPersistentFilename('shadowbox_config.json')
-  );
+  const accessKeyConfig = json_config.loadFileConfig(getPersistentFilename('shadowbox_config.json'));
   reserveExistingAccessKeyPorts(accessKeyConfig, portProvider);
 
-  prometheus.collectDefaultMetrics({register: prometheus.register});
+  prometheus.collectDefaultMetrics({ register: prometheus.register });
 
-  // Default to production metrics, as some old Docker images may not have
-  // SB_METRICS_URL properly set.
   const metricsCollectorUrl = process.env.SB_METRICS_URL || 'https://prod.metrics.getoutline.org';
   if (!process.env.SB_METRICS_URL) {
     logging.warn('process.env.SB_METRICS_URL not set, using default');
@@ -108,9 +98,7 @@ async function main() {
   }
   portProvider.addReservedPort(apiPortNumber);
 
-  const serverConfig = server_config.readServerConfig(
-    getPersistentFilename('shadowbox_server_config.json')
-  );
+  const serverConfig = server_config.readServerConfig(getPersistentFilename('shadowbox_server_config.json'));
 
   const proxyHostname = serverConfig.data().hostname;
   if (!proxyHostname) {
@@ -122,8 +110,6 @@ async function main() {
   logging.info(`SB_METRICS_URL: ${metricsCollectorUrl}`);
 
   const prometheusPort = await portProvider.reserveFirstFreePort(9090);
-  // Use 127.0.0.1 instead of localhost for Prometheus because it's resolving incorrectly for some users.
-  // See https://github.com/Jigsaw-Code/outline-server/issues/341
   const prometheusLocation = `127.0.0.1:${prometheusPort}`;
 
   const nodeMetricsPort = await portProvider.reserveFirstFreePort(prometheusPort + 1);
@@ -139,8 +125,8 @@ async function main() {
       scrape_interval: '1m',
     },
     scrape_configs: [
-      {job_name: 'prometheus', static_configs: [{targets: [prometheusLocation]}]},
-      {job_name: 'outline-server-main', static_configs: [{targets: [nodeMetricsLocation]}]},
+      { job_name: 'prometheus', static_configs: [{ targets: [prometheusLocation] }] },
+      { job_name: 'outline-server-main', static_configs: [{ targets: [nodeMetricsLocation] }] },
     ],
   };
 
@@ -148,8 +134,9 @@ async function main() {
   logging.info(`outline-ss-server metrics is at ${ssMetricsLocation}`);
   prometheusConfigJson.scrape_configs.push({
     job_name: 'outline-server-ss',
-    static_configs: [{targets: [ssMetricsLocation]}],
+    static_configs: [{ targets: [ssMetricsLocation] }],
   });
+
   const shadowsocksServer = new OutlineShadowsocksServer(
     getBinaryFilename('outline-ss-server'),
     getPersistentFilename('outline-ss-server/config.yml'),
@@ -172,7 +159,6 @@ async function main() {
     shadowsocksServer.enableReplayProtection();
   }
 
-  // Start Prometheus subprocess and wait for it to be up and running.
   const prometheusConfigFilename = getPersistentFilename('prometheus/config.yml');
   const prometheusTsdbFilename = getPersistentFilename('prometheus/data');
   const prometheusEndpoint = `http://${prometheusLocation}`;
@@ -203,6 +189,7 @@ async function main() {
     serverConfig.data().portForNewAccessKeys = await portProvider.reserveNewPort();
     serverConfig.write();
   }
+
   const accessKeyRepository = new ServerAccessKeyRepository(
     serverConfig.data().portForNewAccessKeys,
     proxyHostname,
@@ -215,13 +202,14 @@ async function main() {
   const metricsReader = new PrometheusUsageMetrics(prometheusClient);
   const managerMetrics = new PrometheusManagerMetrics(prometheusClient);
   const metricsCollector = new RestMetricsCollectorClient(metricsCollectorUrl);
-  const metricsPublisher: SharedMetricsPublisher = new OutlineSharedMetricsPublisher(
+  const metricsPublisher = new OutlineSharedMetricsPublisher(
     new RealClock(),
     serverConfig,
     accessKeyConfig,
     metricsReader,
     metricsCollector
   );
+
   const managerService = new ShadowsocksManagerService(
     process.env.SB_DEFAULT_SERVER_NAME || 'Outline Server',
     serverConfig,
@@ -238,7 +226,6 @@ async function main() {
     key: fs.readFileSync(privateKeyFilename),
   });
 
-  // Pre-routing handlers
   const cors = corsMiddleware({
     origins: ['*'],
     allowHeaders: [],
@@ -248,10 +235,9 @@ async function main() {
   apiServer.pre(cors.preflight);
   apiServer.pre(restify.pre.sanitizePath());
 
-  // All routes handlers
   const apiPrefix = process.env.SB_API_PREFIX ? `/${process.env.SB_API_PREFIX}` : '';
   apiServer.use(restify.plugins.jsonp());
-  apiServer.use(restify.plugins.bodyParser({mapParams: true}));
+  apiServer.use(restify.plugins.bodyParser({ mapParams: true }));
   apiServer.use(cors.actual);
   bindService(apiServer, apiPrefix, managerService);
 
@@ -262,17 +248,17 @@ async function main() {
   await accessKeyRepository.start(new RealClock());
 }
 
-function getPersistentFilename(file: string): string {
+function getPersistentFilename(file) {
   const stateDir = process.env.SB_STATE_DIR || DEFAULT_STATE_DIR;
   return path.join(stateDir, file);
 }
 
-function getBinaryFilename(file: string): string {
+function getBinaryFilename(file) {
   const binDir = path.join(APP_BASE_DIR, 'bin');
   return path.join(binDir, file);
 }
 
-process.on('unhandledRejection', (error: Error) => {
+process.on('unhandledRejection', (error) => {
   logging.error(`unhandledRejection: ${error.stack}`);
 });
 
